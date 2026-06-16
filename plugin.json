@@ -1,0 +1,10 @@
+{
+  "id": "setlist",
+  "name": "Setlists",
+  "version": "1.0.0",
+  "private": false,
+  "nav": { "label": "Setlists", "screen": "setlists" },
+  "screen": "screen.html",
+  "script": "screen.js",
+  "routes": "routes.py"
+}

@@ -1,0 +1,37 @@
+<div class="max-w-4xl mx-auto px-6 pt-24 pb-16">
+    <button onclick="showScreen('home')" class="text-gray-500 hover:text-white text-sm mb-6 flex items-center gap-1">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg> Back
+    </button>
+
+    <!-- Setlist list view -->
+    <div id="sl-list-view">
+        <div class="flex items-center justify-between mb-8">
+            <h2 class="text-3xl font-bold text-white">Setlists</h2>
+            <button onclick="slCreateNew()" class="bg-accent hover:bg-accent-light px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition">+ New Setlist</button>
+        </div>
+        <div id="sl-list" class="space-y-3"></div>
+    </div>
+
+    <!-- Setlist detail view -->
+    <div id="sl-detail-view" class="hidden">
+        <div class="flex items-center gap-3 mb-6">
+            <button onclick="slBackToList()" class="text-gray-500 hover:text-white transition">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            </button>
+            <h2 class="text-2xl font-bold text-white flex-1" id="sl-detail-name"></h2>
+            <button onclick="slRename()" class="px-3 py-1.5 bg-dark-600 hover:bg-dark-500 rounded-lg text-xs text-gray-300 transition">Rename</button>
+            <button onclick="slPlayAll()" id="sl-play-btn" class="bg-accent hover:bg-accent-light px-5 py-2 rounded-xl text-sm font-semibold text-white transition">Play All</button>
+        </div>
+
+        <!-- Add song search -->
+        <div class="flex gap-3 mb-6">
+            <input type="text" id="sl-search" placeholder="Search songs to add..." onkeydown="if(event.key==='Enter')slSearchSongs()"
+                class="flex-1 bg-dark-700 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-gray-300 placeholder-gray-600 focus:border-accent/50 outline-none">
+            <button onclick="slSearchSongs()" class="bg-dark-600 hover:bg-dark-500 px-5 py-2.5 rounded-xl text-sm text-gray-300 transition">Search</button>
+        </div>
+        <div id="sl-search-results" class="space-y-1 mb-6"></div>
+
+        <!-- Song list -->
+        <div id="sl-songs" class="space-y-2"></div>
+    </div>
+</div>
