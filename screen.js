@@ -120,10 +120,11 @@ async function slRemoveSong(songId) {
 }
 
 async function slMove(songId, direction) {
-    // Get current order, swap, reorder
-    const resp = await fetch(`/api/plugins/setlist/${_slCurrentId}`);
-    const data = await resp.json();
-    const ids = data.songs.map(s => s.id);
+    // The DOM already reflects the current server-side order (it's rebuilt
+    // by slLoadDetail after every mutation), so read it straight from the
+    // rendered song rows instead of re-fetching the whole setlist first.
+    const ids = Array.from(document.querySelectorAll('#sl-songs [data-song-id]'))
+        .map(el => Number(el.dataset.songId));
     const idx = ids.indexOf(songId);
     if (idx < 0) return;
     const newIdx = idx + direction;
