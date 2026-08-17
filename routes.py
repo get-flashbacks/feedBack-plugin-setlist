@@ -35,6 +35,14 @@ def _get_conn():
                 FOREIGN KEY (setlist_id) REFERENCES setlists(id) ON DELETE CASCADE
             )
         """)
+        # Every query here (list's per-row COUNT subquery, get_setlist's
+        # WHERE setlist_id ORDER BY position, add's MAX(position) lookup,
+        # remove/reorder's per-song updates) filters on setlist_id. Without
+        # an index each of those does a full table scan of setlist_songs.
+        _conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_setlist_songs_setlist_id "
+            "ON setlist_songs(setlist_id)"
+        )
         _conn.commit()
     return _conn
 
@@ -149,8 +157,10 @@ def setup(app, context):
                 "SELECT id FROM setlist_songs WHERE setlist_id = ? ORDER BY position",
                 (setlist_id,)
             ).fetchall()
-            for i, (sid,) in enumerate(songs):
-                conn.execute("UPDATE setlist_songs SET position = ? WHERE id = ?", (i + 1, sid))
+            conn.executemany(
+                "UPDATE setlist_songs SET position = ? WHERE id = ?",
+                [(i + 1, sid) for i, (sid,) in enumerate(songs)]
+            )
             conn.execute("UPDATE setlists SET updated_at = datetime('now') WHERE id = ?", (setlist_id,))
             conn.commit()
         return {"ok": True}
@@ -163,11 +173,10 @@ def setup(app, context):
             return {"error": "No song IDs"}
         conn = _get_conn()
         with _lock:
-            for i, sid in enumerate(song_ids):
-                conn.execute(
-                    "UPDATE setlist_songs SET position = ? WHERE id = ? AND setlist_id = ?",
-                    (i + 1, sid, setlist_id)
-                )
+            conn.executemany(
+                "UPDATE setlist_songs SET position = ? WHERE id = ? AND setlist_id = ?",
+                [(i + 1, sid, setlist_id) for i, sid in enumerate(song_ids)]
+            )
             conn.execute("UPDATE setlists SET updated_at = datetime('now') WHERE id = ?", (setlist_id,))
             conn.commit()
         return {"ok": True}
