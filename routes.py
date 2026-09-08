@@ -5,6 +5,8 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from fastapi.responses import JSONResponse
+
 _db_path = None
 _conn = None
 _lock = threading.Lock()
@@ -95,7 +97,7 @@ def setup(app, context):
     def create_setlist(data: dict):
         name = _clean_name(data)
         if not name:
-            return {"error": "Name required"}
+            return JSONResponse({"error": "Name required"}, 400)
         conn = _get_conn()
         with _lock:
             cur = conn.execute("INSERT INTO setlists (name) VALUES (?)", (name,))
@@ -115,7 +117,7 @@ def setup(app, context):
     def rename_setlist(setlist_id: int, data: dict):
         name = _clean_name(data)
         if not name:
-            return {"error": "Name required"}
+            return JSONResponse({"error": "Name required"}, 400)
         conn = _get_conn()
         with _lock:
             conn.execute("UPDATE setlists SET name = ?, updated_at = datetime('now') WHERE id = ?",

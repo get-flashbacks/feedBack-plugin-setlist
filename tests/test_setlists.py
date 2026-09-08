@@ -22,8 +22,12 @@ def test_create_and_list(client):
 
 
 def test_create_requires_name(client):
-    assert client.post(f"{BASE}/create", json={"name": "  "}).json() == {"error": "Name required"}
-    assert client.post(f"{BASE}/create", json={}).json() == {"error": "Name required"}
+    r = client.post(f"{BASE}/create", json={"name": "  "})
+    assert r.status_code == 400
+    assert r.json() == {"error": "Name required"}
+    r = client.post(f"{BASE}/create", json={})
+    assert r.status_code == 400
+    assert r.json() == {"error": "Name required"}
 
 
 def test_get_setlist_not_found(client):
@@ -58,7 +62,9 @@ def test_rename_setlist(client, setlist):
 
 
 def test_rename_requires_name(client, setlist):
-    assert client.post(f"{BASE}/{setlist}/rename", json={"name": ""}).json() == {"error": "Name required"}
+    r = client.post(f"{BASE}/{setlist}/rename", json={"name": ""})
+    assert r.status_code == 400
+    assert r.json() == {"error": "Name required"}
 
 
 def test_add_song_requires_filename(client, setlist):
@@ -130,14 +136,17 @@ def test_create_rejects_non_string_name_instead_of_500ing(client):
     # data.get("name", "").strip() alone assumes "name" is a string whenever
     # present; a client sending null/a number for it used to raise
     # AttributeError (500) instead of the intended "Name required" 400.
-    assert client.post(f"{BASE}/create", json={"name": None}).json() == {"error": "Name required"}
-    assert client.post(f"{BASE}/create", json={"name": 123}).json() == {"error": "Name required"}
-    assert client.post(f"{BASE}/create", json={"name": ["a"]}).json() == {"error": "Name required"}
+    for bad_name in (None, 123, ["a"]):
+        r = client.post(f"{BASE}/create", json={"name": bad_name})
+        assert r.status_code == 400
+        assert r.json() == {"error": "Name required"}
 
 
 def test_rename_rejects_non_string_name_instead_of_500ing(client, setlist):
-    assert client.post(f"{BASE}/{setlist}/rename", json={"name": None}).json() == {"error": "Name required"}
-    assert client.post(f"{BASE}/{setlist}/rename", json={"name": 123}).json() == {"error": "Name required"}
+    for bad_name in (None, 123):
+        r = client.post(f"{BASE}/{setlist}/rename", json={"name": bad_name})
+        assert r.status_code == 400
+        assert r.json() == {"error": "Name required"}
 
 
 def test_get_conn_is_race_safe_under_concurrent_first_access(config_dir):
