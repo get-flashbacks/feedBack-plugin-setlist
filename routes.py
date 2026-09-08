@@ -10,40 +10,64 @@ _conn = None
 _lock = threading.Lock()
 
 
+def _clean_name(data: dict) -> str:
+    """Extract and trim the "name" field from a request body.
+
+    `data.get("name", "")` alone assumes the field is a string whenever
+    it's present — a client sending `{"name": null}` or `{"name": 123}`
+    (FastAPI's bare `dict` param accepts any JSON object shape) made the
+    unconditional `.strip()` raise `AttributeError` and 500 the request
+    instead of the intended "Name required" 400.
+    """
+    name = data.get("name", "")
+    return name.strip() if isinstance(name, str) else ""
+
+
 def _get_conn():
+    # Fast path outside the lock: once _conn is set, every caller just reads
+    # it. FastAPI runs these sync `def` routes in a threadpool, so without
+    # locking the slow path, two concurrent first requests can each pass the
+    # `_conn is None` check, open their own sqlite3.connect(), and race to
+    # assign _conn — the loser's connection (and any writes made through it
+    # before the race resolves) is silently discarded.
     global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(_db_path, check_same_thread=False)
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _conn.execute("""
-            CREATE TABLE IF NOT EXISTS setlists (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now'))
+    if _conn is not None:
+        return _conn
+    with _lock:
+        if _conn is None:
+            conn = sqlite3.connect(_db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS setlists (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS setlist_songs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    setlist_id INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    title TEXT,
+                    artist TEXT,
+                    position INTEGER NOT NULL,
+                    arrangement TEXT,
+                    FOREIGN KEY (setlist_id) REFERENCES setlists(id) ON DELETE CASCADE
+                )
+            """)
+            # Every query here (list's per-row COUNT subquery, get_setlist's
+            # WHERE setlist_id ORDER BY position, add's MAX(position) lookup,
+            # remove/reorder's per-song updates) filters on setlist_id.
+            # Without an index each of those does a full table scan of
+            # setlist_songs.
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_setlist_songs_setlist_id "
+                "ON setlist_songs(setlist_id)"
             )
-        """)
-        _conn.execute("""
-            CREATE TABLE IF NOT EXISTS setlist_songs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                setlist_id INTEGER NOT NULL,
-                filename TEXT NOT NULL,
-                title TEXT,
-                artist TEXT,
-                position INTEGER NOT NULL,
-                arrangement TEXT,
-                FOREIGN KEY (setlist_id) REFERENCES setlists(id) ON DELETE CASCADE
-            )
-        """)
-        # Every query here (list's per-row COUNT subquery, get_setlist's
-        # WHERE setlist_id ORDER BY position, add's MAX(position) lookup,
-        # remove/reorder's per-song updates) filters on setlist_id. Without
-        # an index each of those does a full table scan of setlist_songs.
-        _conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_setlist_songs_setlist_id "
-            "ON setlist_songs(setlist_id)"
-        )
-        _conn.commit()
+            conn.commit()
+            _conn = conn
     return _conn
 
 
@@ -69,7 +93,7 @@ def setup(app, context):
 
     @app.post("/api/plugins/setlist/create")
     def create_setlist(data: dict):
-        name = data.get("name", "").strip()
+        name = _clean_name(data)
         if not name:
             return {"error": "Name required"}
         conn = _get_conn()
@@ -89,7 +113,7 @@ def setup(app, context):
 
     @app.post("/api/plugins/setlist/{setlist_id}/rename")
     def rename_setlist(setlist_id: int, data: dict):
-        name = data.get("name", "").strip()
+        name = _clean_name(data)
         if not name:
             return {"error": "Name required"}
         conn = _get_conn()
