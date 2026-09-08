@@ -1,5 +1,7 @@
 """Setlist CRUD + song ordering."""
 
+import routes
+
 BASE = "/api/plugins/setlist"
 
 
@@ -122,3 +124,52 @@ def test_reorder_songs(client, setlist):
 def test_reorder_requires_song_ids(client, setlist):
     assert client.post(f"{BASE}/{setlist}/reorder", json={"song_ids": []}).json() == {"error": "No song IDs"}
     assert client.post(f"{BASE}/{setlist}/reorder", json={}).json() == {"error": "No song IDs"}
+
+
+def test_create_rejects_non_string_name_instead_of_500ing(client):
+    # data.get("name", "").strip() alone assumes "name" is a string whenever
+    # present; a client sending null/a number for it used to raise
+    # AttributeError (500) instead of the intended "Name required" 400.
+    assert client.post(f"{BASE}/create", json={"name": None}).json() == {"error": "Name required"}
+    assert client.post(f"{BASE}/create", json={"name": 123}).json() == {"error": "Name required"}
+    assert client.post(f"{BASE}/create", json={"name": ["a"]}).json() == {"error": "Name required"}
+
+
+def test_rename_rejects_non_string_name_instead_of_500ing(client, setlist):
+    assert client.post(f"{BASE}/{setlist}/rename", json={"name": None}).json() == {"error": "Name required"}
+    assert client.post(f"{BASE}/{setlist}/rename", json={"name": 123}).json() == {"error": "Name required"}
+
+
+def test_get_conn_is_race_safe_under_concurrent_first_access(config_dir):
+    """Regression test for the unguarded `if _conn is None: _conn = ...`
+    double-connect race: two threads hitting _get_conn() for the very first
+    time used to be able to both pass the None check, each open (and DDL-
+    initialize) their own sqlite3 connection, and race to assign the module
+    global — the loser's connection (and anything written through it before
+    the race resolved) silently vanishes. Simulate the race directly rather
+    than through TestClient (real concurrent HTTP requests aren't
+    reliably schedulable in a unit test) by having N threads call
+    _get_conn() at (as close to) the same moment as a barrier can arrange,
+    and asserting every thread observed the exact same connection object.
+    """
+    import threading
+
+    routes._conn = None
+    routes._db_path = str(config_dir / "race.db")
+
+    n_threads = 16
+    barrier = threading.Barrier(n_threads)
+    results = [None] * n_threads
+
+    def worker(i):
+        barrier.wait()
+        results[i] = routes._get_conn()
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert all(conn is results[0] for conn in results)
+    assert routes._conn is results[0]
