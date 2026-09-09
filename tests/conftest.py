@@ -18,6 +18,12 @@ def config_dir(tmp_path):
 
 
 @pytest.fixture
+def routes_module():
+    """Expose the already-loaded plugin routes module to tests."""
+    return routes
+
+
+@pytest.fixture
 def client(config_dir):
     routes._conn = None
     routes._db_path = None
