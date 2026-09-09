@@ -1,7 +1,5 @@
 """Setlist CRUD + song ordering."""
 
-import routes
-
 BASE = "/api/plugins/setlist"
 
 
@@ -149,7 +147,7 @@ def test_rename_rejects_non_string_name_instead_of_500ing(client, setlist):
         assert r.json() == {"error": "Name required"}
 
 
-def test_get_conn_is_race_safe_under_concurrent_first_access(config_dir):
+def test_get_conn_is_race_safe_under_concurrent_first_access(config_dir, routes_module):
     """Regression test for the unguarded `if _conn is None: _conn = ...`
     double-connect race: two threads hitting _get_conn() for the very first
     time used to be able to both pass the None check, each open (and DDL-
@@ -163,8 +161,8 @@ def test_get_conn_is_race_safe_under_concurrent_first_access(config_dir):
     """
     import threading
 
-    routes._conn = None
-    routes._db_path = str(config_dir / "race.db")
+    routes_module._conn = None
+    routes_module._db_path = str(config_dir / "race.db")
 
     n_threads = 16
     barrier = threading.Barrier(n_threads)
@@ -172,7 +170,7 @@ def test_get_conn_is_race_safe_under_concurrent_first_access(config_dir):
 
     def worker(i):
         barrier.wait()
-        results[i] = routes._get_conn()
+        results[i] = routes_module._get_conn()
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
     for t in threads:
@@ -181,4 +179,4 @@ def test_get_conn_is_race_safe_under_concurrent_first_access(config_dir):
         t.join()
 
     assert all(conn is results[0] for conn in results)
-    assert routes._conn is results[0]
+    assert routes_module._conn is results[0]
