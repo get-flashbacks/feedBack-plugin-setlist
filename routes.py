@@ -22,7 +22,7 @@ def _now() -> str:
     produced while carrying sub-second resolution. Values are always passed as
     bound parameters, never concatenated into SQL.
     """
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
 def _clean_name(data: dict) -> str:
