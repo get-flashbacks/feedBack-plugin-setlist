@@ -40,11 +40,15 @@ async function slLoadList() {
 async function slCreateNew() {
     const name = prompt('Setlist name:');
     if (!name) return;
-    await fetch('/api/plugins/setlist/create', {
+    const resp = await fetch('/api/plugins/setlist/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
     });
+    if (!resp.ok) {
+        alert((await resp.json()).error || 'Could not create setlist');
+        return;
+    }
     slLoadList();
 }
 
@@ -75,6 +79,17 @@ function slBackToList() {
 async function slLoadDetail() {
     const resp = await fetch(`/api/plugins/setlist/${_slCurrentId}`);
     const data = await resp.json();
+
+    // A setlist deleted elsewhere (another tab/window) comes back as an
+    // `error` body with no `songs`. Dereferencing data.songs anyway threw a
+    // TypeError and left stale rows on screen.
+    if (!resp.ok || data.error) {
+        document.getElementById('sl-detail-name').textContent = '';
+        document.getElementById('sl-songs').innerHTML =
+            `<p class="text-red-400 text-sm">${esc(data.error || 'Setlist not found')}</p>`;
+        document.getElementById('sl-play-btn').classList.add('hidden');
+        return;
+    }
 
     document.getElementById('sl-detail-name').textContent = data.name;
 
@@ -166,7 +181,7 @@ async function slSearchSongs() {
 }
 
 async function slAddSong(filename, title, artist, arrangement) {
-    await fetch(`/api/plugins/setlist/${_slCurrentId}/add`, {
+    const resp = await fetch(`/api/plugins/setlist/${_slCurrentId}/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -174,6 +189,10 @@ async function slAddSong(filename, title, artist, arrangement) {
             title, artist, arrangement,
         }),
     });
+    if (!resp.ok) {
+        alert((await resp.json()).error || 'Could not add song');
+        return;
+    }
     slLoadDetail();
 }
 

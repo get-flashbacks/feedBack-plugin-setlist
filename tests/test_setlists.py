@@ -1,5 +1,7 @@
 """Setlist CRUD + song ordering."""
 
+import pytest
+
 BASE = "/api/plugins/setlist"
 
 
@@ -29,7 +31,9 @@ def test_create_requires_name(client):
 
 
 def test_get_setlist_not_found(client):
-    assert client.get(f"{BASE}/9999").json() == {"error": "Not found"}
+    r = client.get(f"{BASE}/9999")
+    assert r.status_code == 404
+    assert r.json() == {"error": "Not found"}
 
 
 def test_get_setlist_with_no_songs(client, setlist):
@@ -66,7 +70,10 @@ def test_rename_requires_name(client, setlist):
 
 
 def test_add_song_requires_filename(client, setlist):
-    assert client.post(f"{BASE}/{setlist}/add", json={}).json() == {"error": "No filename"}
+    for body in ({}, {"filename": ""}, {"filename": "   "}):
+        r = client.post(f"{BASE}/{setlist}/add", json=body)
+        assert r.status_code == 400
+        assert r.json() == {"error": "No filename"}
 
 
 def test_add_songs_assigns_incrementing_positions(client, setlist):
@@ -108,8 +115,14 @@ def test_remove_song_scoped_to_its_setlist(client, setlist):
     # song ids are global; find the actual song row id via the setlist view.
     song_id = client.get(f"{BASE}/{setlist}").json()["songs"][0]["id"]
 
-    client.delete(f"{BASE}/{other}/song/{song_id}")  # wrong setlist -> no-op
+    client.delete(f"{BASE}/{other}/song/{song_id}")  # wrong setlist -> 404
     assert len(client.get(f"{BASE}/{setlist}").json()["songs"]) == 1
+
+
+def test_remove_missing_song_returns_404(client, setlist):
+    r = client.delete(f"{BASE}/{setlist}/song/424242")
+    assert r.status_code == 404
+    assert r.json() == {"error": "Not found"}
 
 
 def test_reorder_songs(client, setlist):
@@ -126,8 +139,10 @@ def test_reorder_songs(client, setlist):
 
 
 def test_reorder_requires_song_ids(client, setlist):
-    assert client.post(f"{BASE}/{setlist}/reorder", json={"song_ids": []}).json() == {"error": "No song IDs"}
-    assert client.post(f"{BASE}/{setlist}/reorder", json={}).json() == {"error": "No song IDs"}
+    for body in ({"song_ids": []}, {}):
+        r = client.post(f"{BASE}/{setlist}/reorder", json=body)
+        assert r.status_code == 400
+        assert r.json() == {"error": "No song IDs"}
 
 
 def test_create_rejects_non_string_name_instead_of_500ing(client):
@@ -161,7 +176,7 @@ def test_get_conn_is_race_safe_under_concurrent_first_access(config_dir, routes_
     """
     import threading
 
-    routes_module._conn = None
+    routes_module._reset_conn()
     routes_module._db_path = str(config_dir / "race.db")
 
     n_threads = 16
@@ -180,3 +195,131 @@ def test_get_conn_is_race_safe_under_concurrent_first_access(config_dir, routes_
 
     assert all(conn is results[0] for conn in results)
     assert routes_module._conn is results[0]
+
+
+# ── Audit regressions ──────────────────────────────────────────────────
+
+
+def test_foreign_keys_pragma_is_enforced(routes_module, config_dir):
+    """`ON DELETE CASCADE` was declared but never enabled.
+
+    SQLite defaults `PRAGMA foreign_keys` to OFF per connection, so the
+    constraint on setlist_songs was documentation only. delete_setlist masks
+    this by deleting children explicitly; nothing else did.
+    """
+    routes_module._reset_conn()
+    routes_module._db_path = str(config_dir / "fk.db")
+    conn = routes_module._get_conn()
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_add_song_to_missing_setlist_rejected_instead_of_orphaning(client):
+    """Adding to a nonexistent setlist returned ok:true and leaked a row."""
+    before = client.get(f"{BASE}/list").json()
+    r = client.post(f"{BASE}/98765/add", json={"filename": "ghost.sloppak"})
+    assert r.status_code == 404
+    assert r.json() == {"error": "Not found"}
+    assert len(client.get(f"{BASE}/list").json()) == len(before)
+
+
+def test_foreign_key_now_blocks_orphan_insert(routes_module, config_dir):
+    """Belt-and-braces: the DB itself refuses a dangling setlist_id."""
+    routes_module._reset_conn()
+    routes_module._db_path = str(config_dir / "fk2.db")
+    conn = routes_module._get_conn()
+    import sqlite3
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO setlist_songs (setlist_id, filename, position) VALUES (?, ?, ?)",
+            (999999, "ghost.sloppak", 1),
+        )
+    conn.rollback()
+
+
+def test_add_song_rejects_non_string_fields_instead_of_500ing(client, setlist):
+    """Non-string values reached sqlite3 and raised InterfaceError -> 500."""
+    for bad in (["a"], {"k": 1}, True):
+        r = client.post(f"{BASE}/{setlist}/add", json={"filename": bad})
+        assert r.status_code == 400
+        assert r.json() == {"error": "No filename"}
+
+    # Non-string title/artist/arrangement coerce to "" instead of 500ing.
+    r = client.post(f"{BASE}/{setlist}/add",
+                    json={"filename": "ok.sloppak", "title": {"x": 1}, "artist": [1]})
+    assert r.status_code == 200
+    song = client.get(f"{BASE}/{setlist}").json()["songs"][-1]
+    assert song["filename"] == "ok.sloppak"
+    assert song["title"] == ""
+    assert song["artist"] == ""
+
+
+def test_reorder_partial_list_keeps_positions_dense(client, setlist):
+    """A partial song_ids list used to assign 1..len() and duplicate positions."""
+    for t in "ABC":
+        client.post(f"{BASE}/{setlist}/add", json={"filename": f"{t}.sloppak", "title": t})
+    ids = {s["title"]: s["id"] for s in client.get(f"{BASE}/{setlist}").json()["songs"]}
+
+    client.post(f"{BASE}/{setlist}/reorder", json={"song_ids": [ids["C"]]})
+
+    songs = client.get(f"{BASE}/{setlist}").json()["songs"]
+    assert [s["title"] for s in songs] == ["C", "A", "B"]
+    assert sorted(s["position"] for s in songs) == [1, 2, 3]
+
+
+def test_reorder_rejects_unknown_song_ids(client, setlist):
+    """Foreign/duplicate ids returned ok:true while changing nothing."""
+    client.post(f"{BASE}/{setlist}/add", json={"filename": "a.sloppak", "title": "A"})
+    song_id = client.get(f"{BASE}/{setlist}").json()["songs"][0]["id"]
+
+    r = client.post(f"{BASE}/{setlist}/reorder", json={"song_ids": [999999]})
+    assert r.status_code == 400
+    assert "999999" in r.json()["error"]
+
+    r = client.post(f"{BASE}/{setlist}/reorder", json={"song_ids": [song_id, song_id]})
+    assert r.status_code == 400
+    assert r.json() == {"error": "song_ids must not contain duplicates"}
+
+
+def test_reorder_rejects_non_integer_ids_instead_of_500ing(client, setlist):
+    """`{"song_ids": 5}` raised TypeError: 'int' object is not iterable."""
+    for bad in (5, "abc", [None], [{"id": 1}], [True], {"a": 1}):
+        r = client.post(f"{BASE}/{setlist}/reorder", json={"song_ids": bad})
+        assert r.status_code == 400, bad
+        assert r.json() == {"error": "song_ids must be a list of integers"}
+
+
+def test_mutations_on_missing_setlist_return_404(client):
+    assert client.delete(f"{BASE}/98765").status_code == 404
+    assert client.post(f"{BASE}/98765/rename", json={"name": "x"}).status_code == 404
+    assert client.post(f"{BASE}/98765/reorder", json={"song_ids": [1]}).status_code == 404
+
+
+def test_list_order_is_deterministic_when_timestamps_collide(client):
+    """datetime('now') has 1s resolution, so ties ordered arbitrarily."""
+    ids = [client.post(f"{BASE}/create", json={"name": f"S{i}"}).json()["id"] for i in range(5)]
+    first = [s["id"] for s in client.get(f"{BASE}/list").json()]
+    second = [s["id"] for s in client.get(f"{BASE}/list").json()]
+    assert first == second
+    # Newest-created first when nothing has bumped updated_at.
+    assert first == list(reversed(ids))
+
+
+def test_updated_at_has_subsecond_precision(client, setlist):
+    """Millisecond stamps keep "most recently updated" honest within a second."""
+    client.post(f"{BASE}/{setlist}/add", json={"filename": "a.sloppak"})
+    stamps = [s["updated_at"] for s in client.get(f"{BASE}/list").json()]
+    assert len(stamps) == 1
+    assert len(stamps[0].split(".")[-1]) >= 3
+
+
+def test_setup_resets_cached_connection_between_apps(config_dir, routes_module):
+    """A second setup() kept serving the first db path."""
+    other_dir = config_dir / "second"
+    other_dir.mkdir()
+    routes_module._reset_conn()
+    routes_module._db_path = str(config_dir / "first.db")
+    first = routes_module._get_conn()
+    routes_module._reset_conn()
+    routes_module._db_path = str(other_dir / "second.db")
+    second = routes_module._get_conn()
+    assert first is not second

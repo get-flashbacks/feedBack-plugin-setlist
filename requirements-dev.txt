@@ -1,0 +1,5 @@
+# Test-only dependencies. The plugin itself has no runtime requirements
+# beyond fastapi, which the host application already provides.
+fastapi>=0.100
+httpx>=0.24
+pytest>=7.0
