@@ -25,12 +25,14 @@ def routes_module():
 
 @pytest.fixture
 def client(config_dir):
-    routes._conn = None
     routes._db_path = None
     app = FastAPI()
     routes.setup(app, {"config_dir": config_dir, "meta_db": None})
     with TestClient(app) as c:
         yield c
+    # setup() caches the connection in a module global; close it so the
+    # tmp_path sqlite file (and its WAL sidecars) can be cleaned up.
+    routes._reset_conn()
 
 
 @pytest.fixture
