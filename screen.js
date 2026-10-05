@@ -12,6 +12,21 @@ function formatJsStringForHtml(str) {
     return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+// ── Errors ─────────────────────────────────────────────────────────────
+
+// Read an error message from a failed response without trusting the body to
+// be JSON. A 500 from the host (or a proxy) returns HTML, and `resp.json()`
+// would reject — an unhandled rejection inside an async handler, so the
+// alert never fires and the failure stays completely silent.
+async function _slErrorMessage(resp, fallback) {
+    try {
+        const body = await resp.json();
+        return (body && body.error) || fallback;
+    } catch (_) {
+        return fallback;
+    }
+}
+
 // ── List View ───────────────────────────────────────────────────────────
 
 async function slLoadList() {
@@ -46,7 +61,7 @@ async function slCreateNew() {
         body: JSON.stringify({ name }),
     });
     if (!resp.ok) {
-        alert((await resp.json()).error || 'Could not create setlist');
+        alert(await _slErrorMessage(resp, 'Could not create setlist'));
         return;
     }
     slLoadList();
@@ -190,7 +205,7 @@ async function slAddSong(filename, title, artist, arrangement) {
         }),
     });
     if (!resp.ok) {
-        alert((await resp.json()).error || 'Could not add song');
+        alert(await _slErrorMessage(resp, 'Could not add song'));
         return;
     }
     slLoadDetail();

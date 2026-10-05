@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject non-string `filename`/`title`/`artist`/`arrangement` on add with 400 instead of an opaque 500 from `sqlite3.InterfaceError`.
 - Validate `song_ids` on reorder: non-list payloads no longer raise `TypeError`, duplicates and ids from another setlist are rejected instead of silently returning success.
 - Keep positions dense (1..N) when reorder receives a partial id list. Positions were assigned `1..len(song_ids)`, producing duplicates and ambiguous ordering.
+- Preserve the current relative order of songs omitted from a partial reorder. Omitted songs were appended in rowid order, so hoisting one song silently rewrote the rest of the setlist back to insertion order.
 - Return 404 (not 200 with an `error` key) for missing setlists and missing songs, and 400 for `No filename` / `No song IDs`, so error paths are consistently non-2xx.
 - Store `created_at`/`updated_at` with millisecond precision. Second-level truncation made "most recently updated first" ordering arbitrary for same-second writes; list ordering now also tie-breaks on id.
 - `setup()` now resets the cached connection so a second mount no longer serves the previous database path.

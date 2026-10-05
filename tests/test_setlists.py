@@ -266,6 +266,32 @@ def test_reorder_partial_list_keeps_positions_dense(client, setlist):
     assert sorted(s["position"] for s in songs) == [1, 2, 3]
 
 
+def test_reorder_partial_list_preserves_current_order_of_omitted_songs(client, setlist):
+    """Regression: omitted songs must keep their current relative order.
+
+    `owned` was read without ORDER BY, so it came back in rowid (insertion)
+    order. After any prior reorder that is a different sequence, and hoisting
+    one song silently rewrote the rest of the setlist back to insertion order.
+    A test that only adds songs and never reorders first cannot catch this,
+    because rowid order and position order coincide until the first reorder.
+    """
+    for t in "ABCD":
+        client.post(f"{BASE}/{setlist}/add", json={"filename": f"{t}.sloppak", "title": t})
+    ids = {s["title"]: s["id"] for s in client.get(f"{BASE}/{setlist}").json()["songs"]}
+
+    # Reverse, so current position order is D,C,B,A while rowid order stays A,B,C,D.
+    client.post(f"{BASE}/{setlist}/reorder",
+                json={"song_ids": [ids["D"], ids["C"], ids["B"], ids["A"]]})
+    assert [s["title"] for s in client.get(f"{BASE}/{setlist}").json()["songs"]] == \
+        ["D", "C", "B", "A"]
+
+    # Hoist D only; C,B,A must stay in that relative order.
+    client.post(f"{BASE}/{setlist}/reorder", json={"song_ids": [ids["D"]]})
+    songs = client.get(f"{BASE}/{setlist}").json()["songs"]
+    assert [s["title"] for s in songs] == ["D", "C", "B", "A"]
+    assert [s["position"] for s in songs] == [1, 2, 3, 4]
+
+
 def test_reorder_rejects_unknown_song_ids(client, setlist):
     """Foreign/duplicate ids returned ok:true while changing nothing."""
     client.post(f"{BASE}/{setlist}/add", json={"filename": "a.sloppak", "title": "A"})

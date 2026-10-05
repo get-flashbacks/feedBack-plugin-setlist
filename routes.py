@@ -313,12 +313,17 @@ def setup(app, context):
             if not _setlist_exists(conn, setlist_id):
                 return _error("Not found", 404)
 
+            # ORDER BY is load-bearing: omitted songs are appended in their
+            # *current* order, so reading them in rowid order would append in
+            # insertion order instead and silently rewrite the rest of the
+            # setlist after any prior reorder.
             owned = [r[0] for r in conn.execute(
-                "SELECT id FROM setlist_songs WHERE setlist_id = ?",
+                "SELECT id FROM setlist_songs WHERE setlist_id = ? ORDER BY position, id",
                 (setlist_id,)
             ).fetchall()]
+            owned_set = set(owned)
 
-            foreign = [sid for sid in song_ids if sid not in set(owned)]
+            foreign = [sid for sid in song_ids if sid not in owned_set]
             if foreign:
                 # Ids from another setlist used to be ignored by the WHERE
                 # clause while the response still claimed success.
