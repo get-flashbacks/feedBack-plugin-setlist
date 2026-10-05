@@ -100,8 +100,14 @@ async function slLoadDetail() {
     // TypeError and left stale rows on screen.
     if (!resp.ok || data.error) {
         document.getElementById('sl-detail-name').textContent = '';
-        document.getElementById('sl-songs').innerHTML =
-            `<p class="text-red-400 text-sm">${esc(data.error || 'Setlist not found')}</p>`;
+        // Built with createElement/textContent rather than innerHTML: the
+        // message needs no markup, and textContent cannot interpret it as
+        // HTML regardless of what the server echoes back.
+        const notice = document.createElement('p');
+        notice.className = 'text-red-400 text-sm';
+        notice.textContent = data.error || 'Setlist not found';
+        const songs = document.getElementById('sl-songs');
+        songs.replaceChildren(notice);
         document.getElementById('sl-play-btn').classList.add('hidden');
         return;
     }

@@ -3,6 +3,7 @@
 import sqlite3
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 from fastapi.responses import JSONResponse
 
@@ -10,13 +11,18 @@ _db_path = None
 _conn = None
 _lock = threading.Lock()
 
-# `datetime('now')` truncates to whole seconds, so two mutations within the
-# same second produced an identical `updated_at` and left the list's
-# "most recently updated first" ordering up to whatever sqlite returned. Use
-# millisecond precision. The stored format stays lexicographically sortable
-# against older second-precision rows: "HH:MM:SS" sorts before "HH:MM:SS.mmm"
-# because the prefix is shared.
-_NOW = "strftime('%Y-%m-%d %H:%M:%f', 'now')"
+
+def _now() -> str:
+    """Current UTC timestamp with millisecond precision.
+
+    `datetime('now')` truncates to whole seconds, so two mutations within the
+    same second produced an identical `updated_at` and left the list's
+    "most recently updated first" ordering up to whatever sqlite returned.
+    SQLite's own 'now' is UTC, so this matches the format it would have
+    produced while carrying sub-second resolution. Values are always passed as
+    bound parameters, never concatenated into SQL.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 def _clean_name(data: dict) -> str:
@@ -83,12 +89,12 @@ def _get_conn():
             # process (host app, maintenance script) holds a write txn.
             conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute(f"""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS setlists (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
-                    created_at TEXT DEFAULT ({_NOW}),
-                    updated_at TEXT DEFAULT ({_NOW})
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now'))
                 )
             """)
             conn.execute("""
@@ -147,7 +153,7 @@ def _write(conn):
 
 def _touch(conn, setlist_id: int):
     conn.execute(
-        f"UPDATE setlists SET updated_at = {_NOW} WHERE id = ?", (setlist_id,)
+        "UPDATE setlists SET updated_at = ? WHERE id = ?", (_now(), setlist_id)
     )
 
 
@@ -182,7 +188,14 @@ def setup(app, context):
             return _error("Name required", 400)
         conn = _get_conn()
         with _write(conn):
-            cur = conn.execute("INSERT INTO setlists (name) VALUES (?)", (name,))
+            # Bind both stamps explicitly: the column DEFAULT is
+            # second-precision sqlite 'now', which reintroduces the same-second
+            # ordering tie this change exists to remove.
+            stamp = _now()
+            cur = conn.execute(
+                "INSERT INTO setlists (name, created_at, updated_at) VALUES (?, ?, ?)",
+                (name, stamp, stamp),
+            )
             return {"id": cur.lastrowid, "name": name}
 
     @app.delete("/api/plugins/setlist/{setlist_id}")
